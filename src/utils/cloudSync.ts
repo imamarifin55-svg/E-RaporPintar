@@ -2,10 +2,11 @@
  * Real-time Cloud Synchronization Client
  * Connects browsers across multiple devices (Teachers, Wali Kelas, Admin)
  * Features:
- * - Monotonic Integer Versioning (Guarantees all devices see each other's changes)
- * - Ultra-fast 2.5s version poll + SSE streaming for real-time push
- * - Cross-tab BroadcastChannel for zero-latency local tab sync
- * - Rock-solid stability: No false "offline" flips during transient stream reconnections
+ * - Direct, reliable push on every save (NO skipped requests)
+ * - Authoritative cloud state on initial mount (guarantees Computer B gets Computer A's saves)
+ * - Monotonic version comparisons (rock-solid integer comparison)
+ * - Ultra-fast 2.0s version poll + SSE streaming for instant push
+ * - Device session identification
  */
 
 import { useEffect, useState, useRef, useCallback } from 'react';
@@ -27,46 +28,41 @@ interface VersionResponse {
   activeConnections?: number;
 }
 
+// Generate persistent unique ID for this browser tab/device
+const CLIENT_ID = 'client-' + Math.random().toString(36).substring(2, 9) + '-' + Date.now();
+
 export function useCloudSync(
   localDb: ERaporDatabase,
-  onRemoteUpdate: (remoteDb: ERaporDatabase) => void
+  onRemoteUpdate: (remoteDb: ERaporDatabase, info?: { source: string; version: number }) => void
 ) {
   const [cloudStatus, setCloudStatus] = useState<CloudStatus>('connected');
   const [lastSyncedTime, setLastSyncedTime] = useState<string>('Baru saja');
   const [activePeersCount, setActivePeersCount] = useState<number>(1);
   const [pingMs, setPingMs] = useState<number>(0);
+  const [syncToast, setSyncToast] = useState<{ message: string; timestamp: number } | null>(null);
 
   // Store references to avoid dependency re-renders triggering connection recreation
-  const onRemoteUpdateRef = useRef<(remoteDb: ERaporDatabase) => void>(onRemoteUpdate);
+  const onRemoteUpdateRef = useRef(onRemoteUpdate);
   onRemoteUpdateRef.current = onRemoteUpdate;
 
   // Track the current cloud version loaded locally
   const currentVersionRef = useRef<number>(0);
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('ERAPOR_CLOUD_VERSION');
-      if (stored) {
-        currentVersionRef.current = parseInt(stored, 10) || 0;
-      }
-    } catch {}
-  }, []);
+  const hasInitialSynced = useRef<boolean>(false);
+  const consecutiveFailures = useRef<number>(0);
+  const isFetchingRef = useRef<boolean>(false);
 
-  const isUpdatingFromRemote = useRef(false);
-  const consecutiveFailures = useRef(0);
-  const isFetchingRef = useRef(false);
-
-  // Cross-tab broadcast channel
+  // Cross-tab broadcast channel for instant multi-tab sync on same machine
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
 
-  // 1. Fetch Full Cloud Database (When version is higher or on initial mount)
-  const fetchCloudData = useCallback(async (): Promise<boolean> => {
+  // 1. Fetch Full Cloud Database
+  const fetchCloudData = useCallback(async (forced = false): Promise<boolean> => {
     if (isFetchingRef.current) return true;
     isFetchingRef.current = true;
     const startTime = performance.now();
 
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 7000);
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
 
       const res = await fetch('/api/database', {
         signal: controller.signal,
@@ -83,16 +79,27 @@ export function useCloudSync(
       if (data.db && data.db.sekolah) {
         const remoteVersion = data.version || 1;
         
-        // Update local if remote version is newer or if this is the first load
-        if (remoteVersion > currentVersionRef.current || currentVersionRef.current === 0) {
+        // Always apply on first mount, or when remote version is newer, or when forced
+        const isNewer = remoteVersion > currentVersionRef.current;
+        const isFirstLoad = !hasInitialSynced.current;
+
+        if (isNewer || isFirstLoad || forced) {
+          hasInitialSynced.current = true;
           currentVersionRef.current = remoteVersion;
+
           try {
             localStorage.setItem('ERAPOR_CLOUD_VERSION', String(remoteVersion));
           } catch {}
 
-          isUpdatingFromRemote.current = true;
-          onRemoteUpdateRef.current(data.db);
+          onRemoteUpdateRef.current(data.db, { source: 'cloud_fetch', version: remoteVersion });
           saveDatabase(data.db);
+
+          if (isNewer && !isFirstLoad) {
+            setSyncToast({
+              message: `Data terbaru berhasil disinkronkan dari perangkat lain (v${remoteVersion})`,
+              timestamp: Date.now(),
+            });
+          }
         }
       }
 
@@ -112,7 +119,7 @@ export function useCloudSync(
     }
   }, []);
 
-  // 2. Fast lightweight Version Check (< 100 bytes)
+  // 2. Fast Lightweight Version Check (< 100 bytes)
   const checkVersionPoll = useCallback(async () => {
     if (isFetchingRef.current) return;
     try {
@@ -134,13 +141,12 @@ export function useCloudSync(
           setActivePeersCount(Math.max(1, data.activeConnections));
         }
 
-        // If another device pushed a newer version, fetch it immediately!
+        // If another device pushed a newer version, pull it immediately!
         if (data.version && data.version > currentVersionRef.current) {
           await fetchCloudData();
         }
       }
     } catch {
-      // Do not mark offline on a single poll drop
       consecutiveFailures.current += 1;
       if (consecutiveFailures.current >= 3) {
         setCloudStatus('offline');
@@ -148,19 +154,15 @@ export function useCloudSync(
     }
   }, [fetchCloudData]);
 
-  // 3. Push Changes to Cloud (When any user saves or edits on this device)
-  const pushToCloud = useCallback(async (newDb: ERaporDatabase): Promise<boolean> => {
-    if (isUpdatingFromRemote.current) {
-      isUpdatingFromRemote.current = false;
-      return true;
-    }
-
-    // Broadcast immediately to other tabs on the same device
+  // 3. Push Changes to Cloud (Always executed when user saves on this device)
+  const pushToCloud = useCallback(async (newDb: ERaporDatabase, senderName?: string): Promise<boolean> => {
+    // Broadcast immediately to other tabs on this same machine
     if (broadcastChannelRef.current) {
       try {
         broadcastChannelRef.current.postMessage({
           type: 'local_tab_update',
           timestamp: new Date().toISOString(),
+          senderId: CLIENT_ID,
           db: newDb,
         });
       } catch (e) {
@@ -169,6 +171,7 @@ export function useCloudSync(
     }
 
     setCloudStatus('syncing');
+
     try {
       const res = await fetch('/api/database', {
         method: 'POST',
@@ -178,6 +181,8 @@ export function useCloudSync(
         },
         body: JSON.stringify({
           db: newDb,
+          senderId: CLIENT_ID,
+          senderName: senderName || 'Guru/Wali Kelas',
           timestamp: new Date().toISOString(),
         }),
       });
@@ -186,6 +191,7 @@ export function useCloudSync(
         const resp: DatabaseResponse = await res.json();
         if (resp.version) {
           currentVersionRef.current = resp.version;
+          hasInitialSynced.current = true;
           try {
             localStorage.setItem('ERAPOR_CLOUD_VERSION', String(resp.version));
           } catch {}
@@ -200,32 +206,30 @@ export function useCloudSync(
       }
     } catch (err) {
       console.warn('[CloudSync] Push error, saved locally:', err);
-      // Offline fallback: data is already saved in localStorage by caller
       return false;
     }
   }, []);
 
   // 4. Setup Real-time Connection on Mount
   useEffect(() => {
-    // A. Setup cross-tab sync
+    // Setup cross-tab sync
     try {
       const channel = new BroadcastChannel('erapor_realtime_sync');
       broadcastChannelRef.current = channel;
 
       channel.onmessage = (event) => {
-        if (event.data?.type === 'local_tab_update' && event.data.db) {
-          isUpdatingFromRemote.current = true;
-          onRemoteUpdateRef.current(event.data.db);
+        if (event.data?.type === 'local_tab_update' && event.data.db && event.data.senderId !== CLIENT_ID) {
+          onRemoteUpdateRef.current(event.data.db, { source: 'cross_tab', version: currentVersionRef.current });
         }
       };
     } catch {
-      // BroadcastChannel not supported in older browsers
+      // Ignored
     }
 
-    // B. Initial cloud data fetch
-    fetchCloudData();
+    // A. Unconditional initial cloud fetch on mount (Guarantees Computer B gets latest data)
+    fetchCloudData(true);
 
-    // C. Setup SSE Stream for instant push notifications
+    // B. Setup SSE Stream for instant sub-second push notifications
     let eventSource: EventSource | null = null;
     let sseTimeoutId: any = null;
 
@@ -243,24 +247,31 @@ export function useCloudSync(
             const payload = JSON.parse(event.data);
             if (payload.type === 'db_update' && payload.db) {
               const remoteVersion = payload.version || (currentVersionRef.current + 1);
-              if (remoteVersion > currentVersionRef.current) {
+
+              // If update came from another client
+              if (payload.senderId !== CLIENT_ID && remoteVersion > currentVersionRef.current) {
                 currentVersionRef.current = remoteVersion;
+                hasInitialSynced.current = true;
                 try {
                   localStorage.setItem('ERAPOR_CLOUD_VERSION', String(remoteVersion));
                 } catch {}
 
-                isUpdatingFromRemote.current = true;
-                onRemoteUpdateRef.current(payload.db);
+                onRemoteUpdateRef.current(payload.db, { source: 'sse', version: remoteVersion });
                 saveDatabase(payload.db);
                 setCloudStatus('connected');
                 setLastSyncedTime(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+
+                setSyncToast({
+                  message: `Data nilai terbaru baru saja masuk dari guru/wali kelas lain (v${remoteVersion})`,
+                  timestamp: Date.now(),
+                });
               }
             } else if (payload.type === 'heartbeat' || payload.type === 'handshake') {
               if (payload.activeConnections) {
                 setActivePeersCount(Math.max(1, payload.activeConnections));
               }
               setCloudStatus('connected');
-              // Check version from handshake
+
               if (payload.version && payload.version > currentVersionRef.current) {
                 fetchCloudData();
               }
@@ -271,27 +282,23 @@ export function useCloudSync(
         };
 
         eventSource.onerror = () => {
-          // Do NOT mark offline on SSE transient close!
-          // Reverse proxies (Cloud Run/Nginx) frequently renegotiate SSE.
           if (eventSource) {
             eventSource.close();
             eventSource = null;
           }
-          // Reconnect SSE after 4 seconds
           sseTimeoutId = setTimeout(connectSSE, 4000);
         };
       } catch (err) {
-        console.warn('[CloudSync] SSE connection error', err);
         sseTimeoutId = setTimeout(connectSSE, 5000);
       }
     };
 
     connectSSE();
 
-    // D. Fast version check every 2.5s guarantees updates appear across all devices!
+    // C. Fast version poll every 2.0s guarantees multi-device synchronization
     const pollInterval = setInterval(() => {
       checkVersionPoll();
-    }, 2500);
+    }, 2000);
 
     return () => {
       if (eventSource) eventSource.close();
@@ -309,7 +316,9 @@ export function useCloudSync(
     lastSyncedTime,
     activePeersCount,
     pingMs,
+    syncToast,
+    dismissToast: () => setSyncToast(null),
     pushToCloud,
-    fetchCloudData,
+    fetchCloudData: () => fetchCloudData(true),
   };
 }

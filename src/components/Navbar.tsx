@@ -1,5 +1,5 @@
 import React from 'react';
-import { User, SekolahConfig } from '../types/erapor';
+import { User, SekolahConfig, Kelas } from '../types/erapor';
 import { 
   GraduationCap, 
   ShieldCheck, 
@@ -11,7 +11,8 @@ import {
   Cloud,
   CloudOff,
   RefreshCw,
-  Radio
+  Radio,
+  User as UserIcon
 } from 'lucide-react';
 import { CloudStatus } from '../utils/cloudSync';
 
@@ -19,6 +20,7 @@ interface NavbarProps {
   currentUser: User;
   sekolah: SekolahConfig;
   allUsers: User[];
+  kelas?: Kelas[];
   cloudStatus?: CloudStatus;
   activePeersCount?: number;
   lastSyncedTime?: string;
@@ -33,6 +35,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentUser,
   sekolah,
   allUsers,
+  kelas = [],
   cloudStatus = 'connected',
   activePeersCount = 1,
   lastSyncedTime = 'Baru saja',
@@ -42,6 +45,15 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenSecurity,
 }) => {
   const [dropdownOpen, setDropdownOpen] = React.useState(false);
+
+  const getRoleLabel = (u: User) => {
+    if (u.role === 'admin') return 'Administrator';
+    if (u.role === 'wali_kelas') {
+      const k = kelas.find(kl => kl.id === u.kelasId);
+      return k ? `Wali Kelas ${k.nama}` : 'Wali Kelas';
+    }
+    return 'Guru Mata Pelajaran';
+  };
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-xs print:hidden">
@@ -160,7 +172,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                     {currentUser.namaLengkap.split(' ')[0]}
                   </div>
                   <div className="text-[11px] text-slate-500 capitalize">
-                    {currentUser.role === 'admin' ? 'Administrator' : currentUser.role === 'wali_kelas' ? 'Wali Kelas VII-A' : 'Guru Mapel'}
+                    {getRoleLabel(currentUser)}
                   </div>
                 </div>
                 <ChevronDown className="w-4 h-4 text-slate-400" />
@@ -173,9 +185,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                     className="fixed inset-0 z-40" 
                     onClick={() => setDropdownOpen(false)} 
                   />
-                  <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-xl border border-slate-100 p-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-xl border border-slate-100 p-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
                     <div className="px-3 py-2 border-b border-slate-100 mb-1">
                       <div className="text-xs font-bold text-slate-900">{currentUser.namaLengkap}</div>
+                      <div className="text-[11px] text-blue-600 font-medium">{getRoleLabel(currentUser)}</div>
                       <div className="text-[11px] text-slate-500 truncate">{currentUser.email || currentUser.username}</div>
                       {currentUser.nip && (
                         <div className="text-[10px] text-slate-400 mt-0.5">NIP: {currentUser.nip}</div>
@@ -183,10 +196,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                     </div>
 
                     <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                      Ganti Akun Cepat (Multi-User)
+                      Pilih Akun Masuk di Perangkat Ini
                     </div>
 
-                    <div className="space-y-1 my-1">
+                    <div className="space-y-1 my-1 max-h-64 overflow-y-auto">
                       {allUsers.map((u) => {
                         const isCurrent = u.id === currentUser.id;
                         return (
@@ -202,18 +215,18 @@ export const Navbar: React.FC<NavbarProps> = ({
                                 : 'hover:bg-slate-50 text-slate-700'
                             }`}
                           >
-                            <div className="flex items-center gap-2">
-                              <span className={`w-2 h-2 rounded-full ${
+                            <div className="flex items-center gap-2.5">
+                              <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${
                                 u.role === 'admin' ? 'bg-purple-500' : u.role === 'wali_kelas' ? 'bg-blue-500' : 'bg-amber-500'
                               }`} />
                               <div>
-                                <div className="truncate max-w-[170px]">{u.namaLengkap}</div>
+                                <div className="truncate max-w-[190px]">{u.namaLengkap}</div>
                                 <div className="text-[10px] text-slate-400 font-normal">
-                                  {u.role === 'admin' ? 'Super Admin' : u.role === 'wali_kelas' ? 'Wali Kelas VII-A' : 'Guru Mata Pelajaran'}
+                                  {getRoleLabel(u)}
                                 </div>
                               </div>
                             </div>
-                            {isCurrent && <UserCheck className="w-3.5 h-3.5 text-blue-600" />}
+                            {isCurrent && <UserCheck className="w-3.5 h-3.5 text-blue-600 shrink-0" />}
                           </button>
                         );
                       })}

@@ -22,15 +22,22 @@ import { KelolaPengguna } from './components/KelolaPengguna';
 import { ProfilSekolah } from './components/ProfilSekolah';
 import { MataPelajaranConfig } from './components/MataPelajaranConfig';
 import { KeamananBackup } from './components/KeamananBackup';
-import { Menu, ShieldAlert } from 'lucide-react';
+import { Menu, ShieldAlert, CheckCircle2, RefreshCw, X } from 'lucide-react';
 
 export default function App() {
   const [db, setDb] = useState<ERaporDatabase>(loadDatabase());
   
-  // Default to Wali Kelas VII-A so users can experience full features immediately
-  const [currentUser, setCurrentUser] = useState<User>(
-    () => db.users.find(u => u.id === 'usr-wali7a') || db.users[0]
-  );
+  // Remember logged in user per computer / device
+  const [currentUser, setCurrentUser] = useState<User>(() => {
+    try {
+      const savedUserId = localStorage.getItem('ERAPOR_ACTIVE_USER_ID');
+      if (savedUserId) {
+        const found = db.users.find(u => u.id === savedUserId);
+        if (found) return found;
+      }
+    } catch {}
+    return db.users.find(u => u.id === 'usr-wali7a') || db.users[0];
+  });
 
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -55,6 +62,8 @@ export default function App() {
     lastSyncedTime,
     activePeersCount,
     pingMs,
+    syncToast,
+    dismissToast,
     pushToCloud,
     fetchCloudData,
   } = useCloudSync(db, handleRemoteCloudUpdate);
@@ -62,7 +71,7 @@ export default function App() {
   const handleUpdateDatabase = (newDb: ERaporDatabase) => {
     setDb(newDb);
     saveDatabase(newDb);
-    pushToCloud(newDb);
+    pushToCloud(newDb, currentUser.namaLengkap);
 
     // Keep currentUser refreshed if its data changed in users array
     const refreshedUser = newDb.users.find(u => u.id === currentUser.id);
@@ -73,6 +82,9 @@ export default function App() {
 
   const handleSwitchUser = (user: User) => {
     setCurrentUser(user);
+    try {
+      localStorage.setItem('ERAPOR_ACTIVE_USER_ID', user.id);
+    } catch {}
     // If current tab is admin-only and switched to non-admin, go to dashboard
     if (['kelola_pengguna', 'sekolah', 'mata_pelajaran'].includes(currentTab) && user.role !== 'admin') {
       setCurrentTab('dashboard');
@@ -97,6 +109,7 @@ export default function App() {
         currentUser={currentUser}
         sekolah={db.sekolah}
         allUsers={db.users}
+        kelas={db.kelas}
         cloudStatus={cloudStatus}
         activePeersCount={activePeersCount}
         lastSyncedTime={lastSyncedTime}
@@ -249,6 +262,28 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {/* Real-time Multi-device Sync Toast */}
+      {syncToast && (
+        <div className="fixed bottom-5 right-5 z-50 max-w-sm sm:max-w-md bg-slate-900 text-white p-3.5 rounded-2xl shadow-2xl border border-blue-500/50 flex items-center gap-3 animate-in fade-in slide-in-from-bottom-3 duration-200">
+          <div className="w-8 h-8 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center shrink-0">
+            <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+          </div>
+          <div className="flex-1 text-xs">
+            <div className="font-bold text-white flex items-center gap-1.5">
+              <span>Sinkronisasi Cloud Real-Time</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            </div>
+            <div className="text-slate-300 mt-0.5 leading-snug">{syncToast.message}</div>
+          </div>
+          <button
+            onClick={dismissToast}
+            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
     </div>
   );
