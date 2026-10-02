@@ -22,6 +22,7 @@ interface NavbarProps {
   cloudStatus?: CloudStatus;
   activePeersCount?: number;
   lastSyncedTime?: string;
+  pingMs?: number;
   onManualSync?: () => void;
   onSwitchUser: (user: User) => void;
   onOpenProfile: () => void;
@@ -35,6 +36,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   cloudStatus = 'connected',
   activePeersCount = 1,
   lastSyncedTime = 'Baru saja',
+  pingMs = 0,
   onManualSync,
   onSwitchUser,
   onOpenSecurity,
@@ -83,42 +85,44 @@ export const Navbar: React.FC<NavbarProps> = ({
             {/* Cloud Real-Time Indicator */}
             <div className="flex items-center gap-1">
               {cloudStatus === 'connected' ? (
-                <div 
-                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-blue-800 bg-blue-50 border border-blue-200 rounded-lg shadow-2xs"
-                  title={`Terkoneksi ke Cloud Real-Time. ${activePeersCount} perangkat/guru aktif. Sinkronisasi terakhir: ${lastSyncedTime}`}
+                <button 
+                  onClick={onManualSync}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-blue-800 bg-blue-50 hover:bg-blue-100/80 border border-blue-200 rounded-lg shadow-2xs transition-colors cursor-pointer"
+                  title={`Terkoneksi ke Cloud Real-Time (${pingMs > 0 ? `${pingMs}ms` : 'Aktif'}). ${activePeersCount} perangkat/guru aktif. Sinkronisasi terakhir: ${lastSyncedTime}. Klik untuk refresh.`}
                 >
                   <span className="relative flex h-2 w-2">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-600"></span>
                   </span>
                   <Cloud className="w-3.5 h-3.5 text-blue-600" />
-                  <span className="hidden lg:inline">Cloud Real-Time</span>
+                  <span className="hidden sm:inline">Cloud Real-Time</span>
                   <span className="px-1.5 py-0.2 rounded-full bg-blue-200/80 text-[10px] text-blue-900 font-bold">
                     {activePeersCount} Guru Live
                   </span>
-                </div>
+                </button>
               ) : cloudStatus === 'syncing' ? (
                 <div 
                   className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg"
                   title="Sedang menyinkronkan data antar perangkat guru..."
                 >
                   <RefreshCw className="w-3.5 h-3.5 text-amber-600 animate-spin" />
-                  <span className="hidden sm:inline">Sinkronisasi Cloud...</span>
+                  <span className="hidden sm:inline">Menyinkronkan...</span>
                 </div>
               ) : (
-                <div 
-                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-slate-700 bg-slate-100 border border-slate-200 rounded-lg"
-                  title="Mode Offline: Data tersimpan aman di browser lokal"
+                <button 
+                  onClick={onManualSync}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors cursor-pointer"
+                  title="Koneksi terputus sementara. Klik untuk mencoba menghubungkan kembali sekarang."
                 >
-                  <CloudOff className="w-3.5 h-3.5 text-slate-500" />
-                  <span className="hidden sm:inline">Lokal (Offline)</span>
-                </div>
+                  <CloudOff className="w-3.5 h-3.5 text-rose-600" />
+                  <span>Hubungkan Cloud</span>
+                </button>
               )}
 
-              {onManualSync && (
+              {onManualSync && cloudStatus === 'connected' && (
                 <button
                   onClick={onManualSync}
-                  title="Sinkronkan data sekarang"
+                  title={`Sinkronkan data sekarang (Sinkron terakhir: ${lastSyncedTime})`}
                   className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-slate-100 rounded-lg transition-colors"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />

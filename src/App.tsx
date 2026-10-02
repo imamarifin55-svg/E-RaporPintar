@@ -54,6 +54,7 @@ export default function App() {
     cloudStatus,
     lastSyncedTime,
     activePeersCount,
+    pingMs,
     pushToCloud,
     fetchCloudData,
   } = useCloudSync(db, handleRemoteCloudUpdate);
@@ -99,6 +100,7 @@ export default function App() {
         cloudStatus={cloudStatus}
         activePeersCount={activePeersCount}
         lastSyncedTime={lastSyncedTime}
+        pingMs={pingMs}
         onManualSync={fetchCloudData}
         onSwitchUser={handleSwitchUser}
         onOpenProfile={() => setCurrentTab('keamanan')}
