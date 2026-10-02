@@ -1,0 +1,6 @@
+{
+  "name": "e-Rapor Pintar",
+  "description": "Sistem Informasi Manajemen Nilai Siswa, Cetak Rapor Otomatis Kurikulum Merdeka, Multi-User Guru & Admin, Impor/Ekspor Excel & PDF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
